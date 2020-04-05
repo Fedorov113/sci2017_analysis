@@ -1,0 +1,39 @@
+---
+title: "R Notebook"
+output: 
+---
+
+```{r}
+taxa <- read.csv('../DATA/human_16S.even13190.rel.sig.csv', row.names = 1)
+taxa <- t(taxa)
+
+meta <- read.csv('../METADATA/human_16S.sampleinfo.csv', sep = ',', row.names = 1)
+# rownames(meta) <- meta$Sample
+
+```
+
+```{r}
+rare.depth = 13190
+otu = log10(round(taxa * rare.depth) + 1)
+
+data.plot = scale((as.matrix(otu)), scale=FALSE)
+
+```
+
+```{r, fig.height=10}
+pheatmap(log10(round(taxa * rare.depth) + 1))
+pheatmap(log(taxa+0.0001))
+
+```
+
+
+```{r}
+taxa <- otu
+# taxa_paper_zer <- taxa[,apply(taxa,2,function(col) {sum(col==0)<35})]
+taxa.mds <- metaMDS(comm = taxa, distance = "binomial", trace = FALSE, autotransform = FALSE)
+taxa.mds$stress
+
+MDS_xy <- data.frame(taxa.mds$points)
+MDS_xy$Response <- meta$Response
+ggplot(MDS_xy, aes(MDS1, MDS2, color = Response)) + geom_point() + theme_bw()
+```
