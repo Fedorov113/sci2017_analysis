@@ -1,0 +1,251 @@
+---
+title: "R Notebook"
+output: 
+---
+
+```{r}
+suppressMessages(library(phyloseq))
+library(ggplot2)
+library(gridExtra)
+library(phyloseq)
+library(plyr)
+library(pheatmap)
+
+source('../../assnake-R/helpers.R')
+```
+
+
+```{r}
+taxa <- readRDS('../DATA/dada2/human/taxa_20.rds')
+seqtab <- readRDS('../DATA/dada2/human/seqtab_nochim__20.rds')
+meta <- read.csv('../METADATA/meta_human_16s.tsv', sep = '\t')
+
+rownames(seqtab) <- gsub('.{3}$', '', sapply(strsplit(rownames(seqtab), ".", fixed = TRUE), `[`, 1))
+rownames(meta) <- meta$df_sample
+```
+
+
+
+```{r}
+ps <- phyloseq(otu_table(seqtab, taxa_are_rows=FALSE),
+               sample_data(meta),
+               tax_table(taxa))
+
+# Rename ACTGTCCA*** with ASV002 for readability
+dna <- Biostrings::DNAStringSet(taxa_names(ps))
+names(dna) <- taxa_names(ps)
+ps <- merge_phyloseq(ps, dna)
+taxa_names(ps) <- paste0("ASV", seq(ntaxa(ps)))
+ps
+```
+
+```{r}
+sample_sums(ps)
+```
+
+
+```{r}
+readsumsdf = data.frame(nreads = sort(taxa_sums(ps), TRUE), sorted = 1:ntaxa(ps), type = "OTUs")
+readsumsdf = rbind(readsumsdf, data.frame(nreads = sort(sample_sums(ps),TRUE), 
+                              sorted = 1:nsamples(ps), type = "Samples"))
+title = "Total number of reads"
+p = ggplot(readsumsdf, aes(x = sorted, y = nreads)) + geom_bar(stat = "identity")
+p + ggtitle(title) + scale_y_log10() + facet_wrap(~type, 1, scales = "free")
+
+rm(readsumsdf)
+mean(sample_sums(ps))
+```
+
+
+```{r simple_qual_filt}
+ps <- ps
+ps
+# remove samples with depth less than min_depth
+min_depth <- 1000
+ps <- prune_samples(sample_sums(ps) > min_depth, ps)
+
+# remove ASVs with no classification at Phylum level
+ps <- subset_taxa(ps, !is.na(Phylum) & !Phylum %in% c("", "uncharacterized"))
+ps
+# remove taxa with total counts less than 10
+ps <- filter_taxa(ps, function(x) sum(x) > 10, TRUE)
+ps
+
+# # prepare filtered metadata and list with removed samples
+# meta_f <- as.data.frame(sample_data(ps))
+# filtered_samples <- setdiff(rownames(meta), rownames(meta_f))
+
+ps0 <- ps
+```
+
+```{r prevalance}
+ps <- ps0
+
+prevdf <- generate_prevelance_df(ps)
+plyr::ddply(prevdf, "Phylum", function(df1){cbind(mean(df1$Prevalence),sum(df1$Prevalence))})
+
+# Actual filtering
+filterPhyla = c("Acidobacteria", "Chloroflexi", "Euryarchaeota", "Nanoarchaeaeota", "Planctomycetes", "Synergistetes")
+ps = subset_taxa(ps, !Phylum %in% filterPhyla)
+
+ps0 <- ps
+```
+
+
+```{r prev_plot, fig.height = 8, fig.width = 10}
+ps <- ps0
+
+percent_of_samples <- 0.03
+min_asv_depth <- 10
+
+prevdf <- generate_prevelance_df(ps)
+ggplot(prevdf, aes(TotalAbundance, Prevalence / nsamples(ps),color=Phylum)) +
+  # Include a guess for parameter
+  geom_hline(yintercept = percent_of_samples, alpha = 0.5, linetype = 2) + geom_point(size = 0.3, alpha = 0.7) + geom_vline(xintercept = min_asv_depth, alpha = 0.5, linetype = 2) +
+  scale_x_log10() +  xlab("Total Abundance") + ylab("Prevalence [Frac. Samples]") +
+  facet_wrap(~Phylum) + theme(legend.position="none")
+```
+
+
+```{r prev_filter}
+ps <- ps0
+
+prevalenceThreshold = percent_of_samples * nsamples(ps)
+prevalenceThreshold
+
+# Execute prevalence filter, using `prune_taxa()` function
+# keepTaxa = rownames(prevdf)[(prevdf$Prevalence >= prevalenceThreshold) | (prevdf$TotalAbundance > min_asv_depth)]
+keepTaxa = rownames(prevdf)[(prevdf$Prevalence >= prevalenceThreshold)]
+length(keepTaxa)
+length(rownames(prevdf))
+ps <- prune_taxa(keepTaxa, ps)
+ps
+table(tax_table(ps)[, "Phylum"], exclude = NULL)
+
+ps0 <- ps
+```
+
+
+## Agglomeration
+```{r}
+ps_genus <- tax_glom(ps0, taxrank = 'Genus', NArm = FALSE)
+ps_phylum <- tax_glom(ps0, taxrank = 'Phylum', NArm = FALSE)
+ps_class <- tax_glom(ps0, taxrank = 'Class', NArm = FALSE)
+
+```
+
+## Count transformation
+```{r}
+ps_genus_log <- transform_sample_counts(ps_genus, function(x) log(x+0.01))
+ps_genus_ra <- transform_sample_counts(ps_genus, function(x) x / sum(x) )
+
+ps_phylum_log <- transform_sample_counts(ps_phylum, function(x) log(x+0.01))
+ps_phylum_ra <- transform_sample_counts(ps_phylum, function(x) x / sum(x) )
+
+ps_class_log <- transform_sample_counts(ps_class, function(x) log(x+0.01))
+ps_class_ra <- transform_sample_counts(ps_class, function(x) x / sum(x) )
+
+ps_obj_meta <- as(sample_data(ps_genus_ra), 'data.frame')
+cols_of_interest <- c("Response", "BORR")
+meta_subset <- ps_obj_meta[,colnames(ps_obj_meta) %in% cols_of_interest]
+```
+
+# Exploration
+## Heatmaps
+### Phylum
+```{r, fig.height=7, fig.width=10}
+# function(x) {paste0(substr(x['Phylum'], start = 1, stop = 4), '__', x['Genus'])}
+plot_pheatmap_phyloseq(ps_phylum_log, function(x) {x['Phylum']}, 
+                                annotation_row = meta_subset,
+
+                       main = 'ASVs strict Phylum log', 
+                       show_rownames=F,
+                       clustering_method = 'centroid',
+                       # treeheight_row=0
+                       )
+
+```
+
+
+```{r}
+taxa_name_func <- function(x) {paste0(substr(x['Phylum'], 1, 3), '.c__' , substr(x['Class'], 1, 3), '.o__' , substr(x['Order'], 1, 5), '.f__' , substr(x['Family'], 1, 3), '.g__' , gsub('/', '', gsub("-", "", x['Genus'])))}
+counts_ps_genus_ra <- prepare_count_table(ps_genus_ra, taxa_name_func)
+
+# ps_obj_meta
+```
+
+
+### Genus
+```{r, fig.height=12, fig.width=20}
+# == Preprocess counts
+count_matrix_for_clustering <- counts_ps_genus_ra
+
+# count_matrix_for_clustering <- count_matrix_for_clustering[,colMeans(count_matrix_for_clustering) > 0.00001]
+count_matrix_for_clustering <- log(count_matrix_for_clustering +0.0001)
+
+# clustering itself
+set.seed(42)
+km <- kmeans(count_matrix_for_clustering, 4, nstart = 25)
+
+meta_for_heatmap <- cbind(meta_subset, clusterNum = as.factor(km$cluster))
+annotation_colors = list(Response = c('NonResponder' ='red', 'Responder'="green"))
+
+# order counts
+ordered_counts <- count_matrix_for_clustering[order(
+  # km$cluster,
+  meta_for_heatmap$Response),]
+
+# Heatmap
+pheatmap( ordered_counts, 
+          cluster_rows = F,
+          cluster_cols = T,
+          annotation_row = meta_for_heatmap,
+          annotation_colors = annotation_colors,
+          # col= hmcols, 
+          # breaks = bk,
+          main='',
+          show_rownames = F
+          )
+pheatmap( ordered_counts, 
+          cluster_rows = T,
+          cluster_cols = T,
+          annotation_row = meta_for_heatmap,
+          annotation_colors = annotation_colors,
+          # col= hmcols, 
+          # breaks = bk,
+          main='',
+          show_rownames = F
+          )
+# ggsave("./viz/heatmap_asvst_genus_ra_log.pdf", p, dpi=320, width=30, height = 17, units='in')
+
+```
+
+
+
+```{r, fig.width=7, fig.height=7}
+method = 'MDS'
+distance = 'bray'
+
+ps_obj <- ps_genus
+
+out <- ordinate(ps_obj, method = method, distance = distance)
+evals <- out$values$Eigenvalues
+
+ps_obj_meta <- as(sample_data(ps_obj), 'data.frame')
+ps_obj_meta$human_readable_name <- paste0(ps_obj_meta$source,'_T',ps_obj_meta$time_point)
+
+# p <- plot_ordination(ps_obj, out, 'samples', color='sex', shape='group', label='day')  
+#+ geom_line() + geom_point(size = 1) + scale_colour_hue(guide = "none")
+plot_ordination(ps_obj, out, 'samples', color='Response')  + geom_point(size = 3)
+
+```
+
+
+
+
+
+
+
+
+
+

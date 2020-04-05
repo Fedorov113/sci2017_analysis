@@ -21,8 +21,29 @@ data.plot = scale((as.matrix(otu)), scale=FALSE)
 ```
 
 ```{r, fig.height=10}
-pheatmap(log10(round(taxa * rare.depth) + 1))
+cols_of_interest <- c("Response", "BORR")
+meta_subset <- meta[,colnames(meta) %in% cols_of_interest]
+meta_for_heatmap = meta_subset[order(meta_subset$Response),]
+
+annotation_colors = list(Response = c('NonResponder' ='red', 'Responder'="green"))
+
+# count_matrix_for_clustering[match(rownames(meta_for_heatmap.ordered), rownames(count_matrix_for_clustering)),]
+
+
+ordered_counts <- taxa[match(rownames(meta_for_heatmap), rownames(taxa)),]
+
+pheatmap(log(ordered_counts+0.0001), 
+         annotation_row = meta_for_heatmap,
+                   # annotation_colors = annotation_colors,
+
+         cluster_rows = T,
+         cluster_cols = T,
+         show_rownames = F
+         )
+
 pheatmap(log(taxa+0.0001))
+pheatmap(log10(round(taxa * rare.depth) + 1), annotation_row = meta_for_heatmap, annotation_colors = annotation_colors,)
+
 
 ```
 
