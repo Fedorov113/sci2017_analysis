@@ -1,0 +1,271 @@
+---
+title: "Matson WGS"
+output: 
+---
+```{r}
+library(pheatmap)
+library(factoextra)
+library(labdsv)
+suppressMessages(library(DESeq2))
+library(ade4)
+library(vegan)
+library(gclus)
+library(ape)
+library(FactoMineR)
+```
+
+# Matson WGS analysis
+
+## Load data
+```{r}
+taxa_wgs <- read.csv('../DATA/mp2_human_wgs_mp2_genus.tsv', sep = '\t', row.names = 1)
+meta <- read.csv('../METADATA/meta_human_wgs.tsv', sep = '\t', row.names = 1)
+# Select our columns of interest
+cols_of_interest <- c("Response", "BORR")
+meta_subset <- meta[,colnames(meta) %in% cols_of_interest]
+```
+
+
+## Heatmap
+```{r, fig.width=20, fig.height=19}
+count_mtrx <- as.data.frame(taxa_wgs[order(rownames(taxa_wgs)), ])
+
+# remove OTUs that are present in less than 35 samples
+count_mtrx <- count_mtrx[,apply(count_mtrx,2,function(col) {sum(col==0)<130})]
+
+# filter low abundant
+# count_mtrx <- count_mtrx[,colMeans(count_mtrx) > 0.001]
+
+# log transform data, which was in relative abundance, and I don't exactly understand how Metaphlan2 infers final abundance, need to read the code.
+count_mtrx <- log(count_mtrx +0.0001)
+
+# clustering itself
+set.seed(42)
+km <- kmeans(count_mtrx, 4, nstart = 25)
+
+# prepare annoation dataframe
+meta_for_heatmap <- meta_subset
+meta_for_heatmap <- cbind(meta_for_heatmap, clusterNum = as.factor(km$cluster))
+
+# Prepare annotation colors
+annotation_colors <- list(Response = c('NonResponder' ='red', 'Responder'="green"),
+                         BORR = c('Progressive Disease' ='black', 'Partial Response'='red', 'Stable Disease'='yellow', 'Complete Response'='green'))
+
+# order 
+meta_for_heatmap.ordered = meta_for_heatmap[order(meta_for_heatmap$clusterNum, meta_for_heatmap$Response),]
+# Sort original data frame by the order of the new data frame
+ordered_counts <- count_mtrx[match(rownames(meta_for_heatmap.ordered), rownames(count_mtrx)),]
+
+pheatmap(ordered_counts, 
+         annotation_row = meta_for_heatmap.ordered,
+         annotation_colors = annotation_colors,
+         cluster_rows = F,
+         cluster_cols = T,
+         show_rownames = T,
+         main = 'Metaphlan2 v2.96.1, v296_CHOCOPhlAn_201901, Species Level, sum(otu==0)<30 log(count_mtrx +0.0001)'
+         )
+```
+
+
+## Phyloseq experimental
+```{r}
+taxa_wgs_sub <- taxa_wgs[,apply(taxa_wgs,2,function(col) {sum(col==0)<30})]
+taxa_wgs_sub <- taxa_wgs_sub + 1
+
+ps_wgs <- phyloseq(otu_table(taxa_wgs_sub, taxa_are_rows=FALSE),
+               sample_data(meta)
+               # tax_table(taxa)
+               )
+```
+
+
+
+```{r, fig.width=7, fig.height=7}
+method = 'MDS'
+distance = 'bray'
+
+ps_obj <- ps_wgs
+
+out <- ordinate(ps_obj, method = method, distance = distance)
+evals <- out$values$Eigenvalues
+
+ps_obj_meta <- as(sample_data(ps_obj), 'data.frame')
+
+# p <- plot_ordination(ps_obj, out, 'samples', color='sex', shape='group', label='day')  
+#+ geom_line() + geom_point(size = 1) + scale_colour_hue(guide = "none")
+plot_ordination(ps_obj, out, 'samples', color='Response')  + geom_point(size = 3)
+
+```
+
+
+```{r}
+dds1 = phyloseq_to_deseq2(ps_wgs, ~Response)
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(dds1), 1, gm_mean)
+dds1 = estimateSizeFactors(dds1, geoMeans=geoMeans)
+
+dds1 = DESeq(dds1, test="Wald", fitType="parametric")
+
+results(dds1)
+# dds1= estimateSizeFactors(dds1)
+```
+
+
+```{r}
+counts(dds1)
+```
+
+
+
+
+
+# Original Paper
+```{r}
+taxa_paper <- read.csv('../DATA/human_shotgun.rel.full.csv', row.names = 1)
+taxa_paper <- t(taxa_paper)
+pmeta <- meta
+rownames(pmeta) <- pmeta$Sample
+# Select our columns of interest
+cols_of_interest <- c("Response", "BORR")
+pmeta_subset <- pmeta[,colnames(pmeta) %in% cols_of_interest]
+```
+
+
+
+```{r, fig.width=20, fig.height=19}
+
+count_mtrx <- as.data.frame(taxa_paper[order(rownames(taxa_paper)), ])
+
+# remove OTUs that are present in less than 35 samples
+count_mtrx <- count_mtrx[,apply(count_mtrx,2,function(col) {sum(col==0)<30})]
+
+# filter low abundant
+# count_mtrx <- count_mtrx[,colMeans(count_mtrx) > 0.001]
+
+# log transform data, which was in relative abundance, and I don't exactly understand how Metaphlan2 infers final abundance, need to read the code.
+count_mtrx <- log(count_mtrx +0.0001)
+
+# clustering itself
+set.seed(42)
+km <- kmeans(count_mtrx, 4, nstart = 25)
+
+# prepare annoation dataframe
+meta_for_heatmap <- pmeta_subset
+meta_for_heatmap <- cbind(meta_for_heatmap, clusterNum = as.factor(km$cluster))
+
+# Prepare annotation colors
+annotation_colors <- list(Response = c('NonResponder' ='red', 'Responder'="green"),
+                         BORR = c('Progressive Disease' ='black', 'Partial Response'='red', 'Stable Disease'='yellow', 'Complete Response'='green'))
+
+# order 
+meta_for_heatmap.ordered = meta_for_heatmap[order(meta_for_heatmap$clusterNum, meta_for_heatmap$Response),]
+# Sort original data frame by the order of the new data frame
+ordered_counts <- count_mtrx[match(rownames(meta_for_heatmap.ordered), rownames(count_mtrx)),]
+
+pheatmap(ordered_counts, 
+         annotation_row = meta_for_heatmap.ordered,
+         annotation_colors = annotation_colors,
+         cluster_rows = F,
+         cluster_cols = T,
+         show_rownames = T,
+         main = 'Metaphlan2 original paper, Species Level, sum(otu==0)<30 log(count_mtrx +0.0001)'
+         )
+```
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+taxa_paper_zer <- taxa_paper[,apply(taxa_paper,2,function(col) {sum(col==0)<35})]
+taxa.mds <- metaMDS(comm = taxa_paper_zer, distance = "bray", trace = FALSE, autotransform = FALSE)
+taxa.mds$stress
+
+MDS_xy <- data.frame(taxa.mds$points)
+MDS_xy$Response <- pmeta$Response
+ggplot(MDS_xy, aes(MDS1, MDS2, color = Response)) + geom_point() + theme_bw()
+```
+
+
+```{r}
+taxa.mds <- metaMDS(comm = taxa, distance = "bray", trace = FALSE, autotransform = FALSE)
+taxa.mds$stress
+
+MDS_xy <- data.frame(taxa.mds$points)
+MDS_xy$Response <- meta$Response
+ggplot(MDS_xy, aes(MDS1, MDS2, color = Response)) + geom_point() + theme_bw()
+```
+
+
+
+
+
+
+
+
+
+```{r}
+res.pca <- prcomp(count_matrix_for_clustering, scale = TRUE)
+fviz_eig(res.pca)
+
+```
+
+
+
+```{r}
+fviz_pca_ind(res.pca,
+             col.ind = "cos2", # Color by the quality of representation
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+             )
+```
+
+```{r, fig.width=20, fig.height=20}
+fviz_pca_var(res.pca,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+             )
+```
+
+
+```{r, fig.width=10, fig.height=10}
+groups <- as.factor(meta$Response)
+fviz_pca_ind(res.pca,
+             col.ind = groups, # color by groups
+             palette = c("#00AFBB",  "#FC4E07"),
+             addEllipses = TRUE, # Concentration ellipses
+             ellipse.type = "confidence",
+             legend.title = "Groups",
+             repel = TRUE
+             )
+```
+
+
+```{r, fig.width=20, fig.height=20}
+
+dis.bray <- vegdist(taxa, method="bray")
+bray.pco <- pco(dis.bray,k=10)
+barplot(bray.pco$eig)
+plot(bray.pco)
+groups <- as.factor(meta$Response)
+fviz_pca_ind(bray.pco,
+             col.ind = groups, # color by groups
+             palette = c("#00AFBB",  "#FC4E07"),
+             addEllipses = TRUE, # Concentration ellipses
+             ellipse.type = "confidence",
+             legend.title = "Groups",
+             repel = TRUE
+             )
+```
+
+

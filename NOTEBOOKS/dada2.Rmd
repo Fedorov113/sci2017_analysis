@@ -85,8 +85,8 @@ prevdf <- generate_prevelance_df(ps)
 plyr::ddply(prevdf, "Phylum", function(df1){cbind(mean(df1$Prevalence),sum(df1$Prevalence))})
 
 # Actual filtering
-filterPhyla = c("Acidobacteria", "Chloroflexi", "Euryarchaeota", "Nanoarchaeaeota", "Planctomycetes", "Synergistetes")
-ps = subset_taxa(ps, !Phylum %in% filterPhyla)
+# filterPhyla = c("Acidobacteria", "Chloroflexi", "Euryarchaeota", "Nanoarchaeaeota", "Planctomycetes", "Synergistetes")
+# ps = subset_taxa(ps, !Phylum %in% filterPhyla)
 
 ps0 <- ps
 ```
@@ -174,6 +174,10 @@ counts_ps_genus_ra <- prepare_count_table(ps_genus_ra, taxa_name_func)
 # ps_obj_meta
 ```
 
+```{r}
+unique(ps_obj_meta$BORR)
+```
+
 
 ### Genus
 ```{r, fig.height=12, fig.width=20}
@@ -188,11 +192,12 @@ set.seed(42)
 km <- kmeans(count_matrix_for_clustering, 4, nstart = 25)
 
 meta_for_heatmap <- cbind(meta_subset, clusterNum = as.factor(km$cluster))
-annotation_colors = list(Response = c('NonResponder' ='red', 'Responder'="green"))
+annotation_colors <- list(Response = c('NonResponder' ='red', 'Responder'="green"),
+                         BORR = c('Progressive Disease' ='black', 'Partial Response'='red', 'Stable Disease'='yellow', 'Complete Response'='green'))
 
 # order counts
 ordered_counts <- count_matrix_for_clustering[order(
-  # km$cluster,
+  km$cluster,
   meta_for_heatmap$Response),]
 
 # Heatmap
@@ -206,16 +211,16 @@ pheatmap( ordered_counts,
           main='',
           show_rownames = F
           )
-pheatmap( ordered_counts, 
-          cluster_rows = T,
-          cluster_cols = T,
-          annotation_row = meta_for_heatmap,
-          annotation_colors = annotation_colors,
-          # col= hmcols, 
-          # breaks = bk,
-          main='',
-          show_rownames = F
-          )
+# pheatmap( ordered_counts, 
+#           cluster_rows = T,
+#           cluster_cols = T,
+#           annotation_row = meta_for_heatmap,
+#           annotation_colors = annotation_colors,
+#           # col= hmcols, 
+#           # breaks = bk,
+#           main='',
+#           show_rownames = F
+#           )
 # ggsave("./viz/heatmap_asvst_genus_ra_log.pdf", p, dpi=320, width=30, height = 17, units='in')
 
 ```
